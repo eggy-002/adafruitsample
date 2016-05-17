@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Threading.Tasks;
 using Windows.Devices.Enumeration;
 using Windows.Devices.I2c;
+using Windows.Devices.Spi;
 
 namespace Lesson_203V2
 {
@@ -32,13 +33,20 @@ namespace Lesson_203V2
 
     }
 
-    public class BME280Sensor
-    {
-        //The BME280 register addresses according the the datasheet: http://www.adafruit.com/datasheets/BST-BME280-DS001-11.pdf
-        const byte BME280_Address = 0x77;
-        const byte BME280_Signature = 0x60;
+    //String for the friendly name of the SPI bus
+    public enum SPI_Controllers { SPI0 = 0, SPI1 }
 
-        enum eRegisters : byte
+    public abstract class BME280Sensor
+    {
+        //The BME280 register addresses according the the datasheet: 
+        //http://www.adafruit.com/datasheets/BST-BME280-DS001-11.pdf
+        protected const byte BME280_I2C_Address = 0x77;
+        protected const byte BME280_Signature = 0x60;
+
+        //t_fine carries fine temperature as global value
+        Int32 t_fine = Int32.MinValue;
+
+        protected enum eRegisters : byte
         {
             BME280_REGISTER_DIG_T1 = 0x88,
             BME280_REGISTER_DIG_T2 = 0x8A,
@@ -83,125 +91,31 @@ namespace Lesson_203V2
             BME280_REGISTER_HUMIDDATA_LSB = 0xFE,
         };
 
-        //String for the friendly name of the I2C bus 
-        const string I2CControllerName = "I2C1";
-        //Create an I2C device
-        private I2cDevice bme280 = null;
         //Create new calibration data for the sensor
-        BME280_CalibrationData CalibrationData;
+        protected BME280_CalibrationData CalibrationData;
+
         //Variable to check if device is initialized
-        bool init = false;
+        protected bool init = false;
 
         //Method to initialize the BME280 sensor
-        public async Task Initialize()
-        {
-            Debug.WriteLine("BME280::Initialize");
+        public abstract /*async*/ Task Initialize();
 
-            try
-            {
-                //Instantiate the I2CConnectionSettings using the device address of the BME280
-                I2cConnectionSettings settings = new I2cConnectionSettings(BME280_Address);
-                //Set the I2C bus speed of connection to fast mode
-                settings.BusSpeed = I2cBusSpeed.FastMode;
-                //Use the I2CBus device selector to create an advanced query syntax string
-                string aqs = I2cDevice.GetDeviceSelector(I2CControllerName);
-                //Use the Windows.Devices.Enumeration.DeviceInformation class to create a collection using the advanced query syntax string
-                DeviceInformationCollection dis = await DeviceInformation.FindAllAsync(aqs);
-                //Instantiate the the BME280 I2C device using the device id of the I2CBus and the I2CConnectionSettings
-                bme280 = await I2cDevice.FromIdAsync(dis[0].Id, settings);
-                //Check if device was found
-                if (bme280 == null)
-                {
-                    Debug.WriteLine("Device not found");
-                }
-            }
-            catch (Exception e)
-            {
-                Debug.WriteLine("Exception: " + e.Message + "\n" + e.StackTrace);
-                throw;
-            }
+        protected abstract /*async*/ Task Begin();
 
-        }
-        private async Task Begin()
-        {
-            Debug.WriteLine("BME280::Begin");
-            byte[] WriteBuffer = new byte[] { (byte)eRegisters.BME280_REGISTER_CHIPID };
-            byte[] ReadBuffer = new byte[] { 0xFF };
+        //Method to write to the humidity control register
+        protected abstract /*async*/ Task WriteControlRegisterHumidity();
 
-            //Read the device signature
-            bme280.WriteRead(WriteBuffer, ReadBuffer);
-            Debug.WriteLine("BME280 Signature: " + ReadBuffer[0].ToString());
-
-            //Verify the device signature
-            if (ReadBuffer[0] != BME280_Signature)
-            {
-                Debug.WriteLine("BME280::Begin Signature Mismatch.");
-                return;
-            }
-
-            //Set the initialize variable to true
-            init = true;
-
-            //Read the coefficients table
-            CalibrationData = await ReadCoefficeints();
-
-            //Write control register
-            await WriteControlRegister();
-
-            //Write humidity control register
-            await WriteControlRegisterHumidity();
-        }
-
-        //Method to write 0x03 to the humidity control register
-        private async Task WriteControlRegisterHumidity()
-        {
-            byte[] WriteBuffer = new byte[] { (byte)eRegisters.BME280_REGISTER_CONTROLHUMID, 0x03 };
-            bme280.Write(WriteBuffer);
-            await Task.Delay(1);
-            return;
-        }
-
-        //Method to write 0x3F to the control register
-        private async Task WriteControlRegister()
-        {
-            byte[] WriteBuffer = new byte[] { (byte)eRegisters.BME280_REGISTER_CONTROL, 0x3F };
-            bme280.Write(WriteBuffer);
-            await Task.Delay(1);
-            return;
-        }
+        //Method to write to the control register
+        protected abstract /*async*/ Task WriteControlRegister();
 
         //Method to read a 16-bit value from a register and return it in little endian format
-        private UInt16 ReadUInt16_LittleEndian(byte register)
-        {
-            UInt16 value = 0;
-            byte[] writeBuffer = new byte[] { 0x00 };
-            byte[] readBuffer = new byte[] { 0x00, 0x00 };
-
-            writeBuffer[0] = register;
-
-            bme280.WriteRead(writeBuffer, readBuffer);
-            int h = readBuffer[1] << 8;
-            int l = readBuffer[0];
-            value = (UInt16)(h + l);
-            return value;
-        }
+        protected abstract UInt16 ReadUInt16_LittleEndian(byte register);
 
         //Method to read an 8-bit value from a register
-        private byte ReadByte(byte register)
-        {
-            byte value = 0;
-            byte[] writeBuffer = new byte[] { 0x00 };
-            byte[] readBuffer = new byte[] { 0x00 };
-
-            writeBuffer[0] = register;
-
-            bme280.WriteRead(writeBuffer, readBuffer);
-            value = readBuffer[0];
-            return value;
-        }
+        protected abstract byte ReadByte(byte register);
 
         //Method to read the calibration data from the registers
-        private async Task<BME280_CalibrationData> ReadCoefficeints()
+        protected virtual async Task<BME280_CalibrationData> ReadCoefficeints()
         {
             // 16 bit calibration data is stored as Little Endian, the helper method will do the byte swap.
             CalibrationData = new BME280_CalibrationData();
@@ -234,11 +148,8 @@ namespace Lesson_203V2
             return CalibrationData;
         }
 
-
-        //t_fine carries fine temperature as global value
-        Int32 t_fine = Int32.MinValue;
         //Method to return the temperature in DegC. Resolution is 0.01 DegC. Output value of “5123” equals 51.23 DegC.
-        private double BME280_compensate_T_double(Int32 adc_T)
+        protected virtual double BME280_compensate_T_double(Int32 adc_T)
         {
             double var1, var2, T;
 
@@ -252,10 +163,9 @@ namespace Lesson_203V2
             return T;
         }
 
-
         //Method to returns the pressure in Pa, in Q24.8 format (24 integer bits and 8 fractional bits).
         //Output value of “24674867” represents 24674867/256 = 96386.2 Pa = 963.862 hPa
-        private Int64 BME280_compensate_P_Int64(Int32 adc_P)
+        protected virtual Int64 BME280_compensate_P_Int64(Int32 adc_P)
         {
             Int64 var1, var2, p;
 
@@ -282,23 +192,23 @@ namespace Lesson_203V2
 
         // Returns humidity in %RH as unsigned 32 bit integer in Q22.10 format (22 integer and 10 fractional bits).
         // Output value of “47445” represents 47445/1024 = 46.333 %RH
-        UInt32 bme280_compensate_H_int32(Int32 adc_H)
+        protected virtual UInt32 bme280_compensate_H_int32(Int32 adc_H)
         {
             Int32 v_x1_u32r;
             v_x1_u32r = (t_fine - ((Int32)76800));
             v_x1_u32r = (((((adc_H << 14) - (((Int32)CalibrationData.dig_H4) << 20) - (((Int32)CalibrationData.dig_H5) * v_x1_u32r)) +
-            ((Int32)16384)) >> 15) * (((((((v_x1_u32r * ((Int32)CalibrationData.dig_H6)) >> 10) * (((v_x1_u32r *
-                ((Int32)CalibrationData.dig_H3)) >> 11) + ((Int32)32768))) >> 10) + ((Int32)2097152)) *
-            ((Int32)CalibrationData.dig_H2) + 8192) >> 14));
+                        ((Int32)16384)) >> 15) * (((((((v_x1_u32r * ((Int32)CalibrationData.dig_H6)) >> 10) * (((v_x1_u32r *
+                        ((Int32)CalibrationData.dig_H3)) >> 11) + ((Int32)32768))) >> 10) + ((Int32)2097152)) *
+                        ((Int32)CalibrationData.dig_H2) + 8192) >> 14));
             v_x1_u32r = (v_x1_u32r - (((((v_x1_u32r >> 15) * (v_x1_u32r >> 15)) >> 7) * ((Int32)CalibrationData.dig_H1)) >> 4));
             v_x1_u32r = (v_x1_u32r < 0 ? 0 : v_x1_u32r);
             v_x1_u32r = (v_x1_u32r > 419430400 ? 419430400 : v_x1_u32r);
             return (UInt32)(v_x1_u32r >> 12);
         }
 
-        public async Task<float> ReadTemperature()
+        public virtual async Task<float> ReadTemperature()
         {
-            //Make sure the I2C device is initialized
+            //Make sure the device is initialized
             if (!init) await Begin();
 
             //Read the MSB, LSB and bits 7:4 (XLSB) of the temperature from the BME280 registers
@@ -316,9 +226,9 @@ namespace Lesson_203V2
             return (float)temp;
         }
 
-        public async Task<float> ReadPreasure()
+        public virtual async Task<float> ReadPreasure()
         {
-            //Make sure the I2C device is initialized
+            //Make sure the device is initialized
             if (!init) await Begin();
 
             //Read the temperature first to load the t_fine value for compensation
@@ -338,11 +248,11 @@ namespace Lesson_203V2
             //Convert the raw value to the pressure in Pa
             Int64 pres = BME280_compensate_P_Int64(t);
 
-            //Return the temperature as a float value
+            //Return the pressure as a float value
             return ((float)pres) / 256;
         }
 
-        public async Task<float> ReadHumidity()
+        public virtual async Task<float> ReadHumidity()
         {
             if (!init) await Begin();
 
@@ -354,10 +264,11 @@ namespace Lesson_203V2
             return ((float)humidity) / 1000;
         }
 
-        //Method to take the sea level pressure in Hectopascals(hPa) as a parameter and calculate the altitude using current pressure.
-        public async Task<float> ReadAltitude(float seaLevel)
+        //Method to take the sea level pressure in Hectopascals(hPa) 
+        //as a parameter and calculate the altitude using current pressure.
+        public virtual async Task<float> ReadAltitude(float seaLevel)
         {
-            //Make sure the I2C device is initialized
+            //Make sure the device is initialized
             if (!init) await Begin();
 
             //Read the pressure first
@@ -369,4 +280,269 @@ namespace Lesson_203V2
             return 44330.0f * (1.0f - (float)Math.Pow((pressure / seaLevel), 0.1903f));
         }
     }
+
+    public class BME280I2cSensor : BME280Sensor
+    {
+        //String for the friendly name of the I2C bus 
+        const string I2CControllerName = "I2C1";
+
+        //Create an I2C device
+        private I2cDevice bme280I2c = null;
+
+        //Method to initialize the BME280 sensor
+        public override async Task Initialize()
+        {
+            Debug.WriteLine("BME280I2C::Initialize");
+
+            try
+            {
+                //Instantiate the I2CConnectionSettings using the device address of the BME280
+                I2cConnectionSettings settings = new I2cConnectionSettings(BME280_I2C_Address);
+                //Set the I2C bus speed of connection to fast mode
+                settings.BusSpeed = I2cBusSpeed.FastMode;
+                //Use the I2CBus device selector to create an advanced query syntax string
+                string aqs = I2cDevice.GetDeviceSelector(I2CControllerName);
+                //Use the Windows.Devices.Enumeration.DeviceInformation class to create a collection using the advanced query syntax string
+                DeviceInformationCollection dis = await DeviceInformation.FindAllAsync(aqs);
+                //Instantiate the the BME280 I2C device using the device id of the I2CBus and the I2CConnectionSettings
+                bme280I2c = await I2cDevice.FromIdAsync(dis[0].Id, settings);
+                //Check if device was found
+                if (bme280I2c == null)
+                {
+                    Debug.WriteLine("Device not found");
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.WriteLine("Exception: " + e.Message + "\n" + e.StackTrace);
+                throw;
+            }
+
+        }
+
+        protected override async Task Begin()
+        {
+            Debug.WriteLine("BME280I2C::Begin");
+            byte[] WriteBuffer = new byte[] { (byte)eRegisters.BME280_REGISTER_CHIPID };
+            byte[] ReadBuffer = new byte[] { 0xFF };
+
+            //Read the device signature
+            bme280I2c.WriteRead(WriteBuffer, ReadBuffer);
+            Debug.WriteLine("BME280_I2C Signature: " + ReadBuffer[0].ToString());
+
+            //Verify the device signature
+            if (ReadBuffer[0] != BME280_Signature)
+            {
+                Debug.WriteLine("BME280_I2C::Begin Signature Mismatch.");
+                return;
+            }
+
+            //Set the initialize variable to true
+            init = true;
+
+            //Read the coefficients table
+            CalibrationData = await ReadCoefficeints();
+
+            //Write control register
+            await WriteControlRegister();
+
+            //Write humidity control register
+            await WriteControlRegisterHumidity();
+        }
+
+        //Method to write 0x03 to the humidity control register
+        protected override async Task WriteControlRegisterHumidity()
+        {
+            byte[] WriteBuffer = new byte[] { (byte)eRegisters.BME280_REGISTER_CONTROLHUMID, 0x03 };
+            bme280I2c.Write(WriteBuffer);
+            await Task.Delay(1);
+            return;
+        }
+
+        //Method to write 0x3F to the control register
+        protected override async Task WriteControlRegister()
+        {
+            byte[] WriteBuffer = new byte[] { (byte)eRegisters.BME280_REGISTER_CONTROL, 0x3F };
+            bme280I2c.Write(WriteBuffer);
+            await Task.Delay(1);
+            return;
+        }
+
+        //Method to read a 16-bit value from a register and return it in little endian format
+        protected override UInt16 ReadUInt16_LittleEndian(byte register)
+        {
+            UInt16 value = 0;
+            byte[] writeBuffer = new byte[] { 0x00 };
+            byte[] readBuffer = new byte[] { 0x00, 0x00 };
+
+            writeBuffer[0] = register;
+
+            bme280I2c.WriteRead(writeBuffer, readBuffer);
+            int h = readBuffer[1] << 8;
+            int l = readBuffer[0];
+            value = (UInt16)(h + l);
+            return value;
+        }
+
+        //Method to read an 8-bit value from a register
+        protected override byte ReadByte(byte register)
+        {
+            byte value = 0;
+            byte[] writeBuffer = new byte[] { 0x00 };
+            byte[] readBuffer = new byte[] { 0x00 };
+
+            writeBuffer[0] = register;
+
+            bme280I2c.WriteRead(writeBuffer, readBuffer);
+            value = readBuffer[0];
+            return value;
+        }
+
+    }
+
+    public class BME280SpiSensor : BME280Sensor
+    {
+        private string spi_controller_name;
+        private Int32 spi_chip_select_line;
+
+        //Create an SPI device
+        private  SpiDevice bme280spi = null;
+
+        public BME280SpiSensor()
+        {
+            spi_controller_name = "SPI0";
+            spi_chip_select_line = 0;
+        }
+
+        public BME280SpiSensor(SPI_Controllers spiController)
+        {
+            switch (spiController)
+            {
+                case SPI_Controllers.SPI1:
+                    spi_controller_name = "SPI1";
+                    spi_chip_select_line = 1;
+                    break;
+                default:
+                    spi_controller_name = "SPI0";
+                    spi_chip_select_line = 0;
+                    break;
+            }
+        }
+
+        //Method to initialize the BME280 sensor
+        public override async Task Initialize()
+        {
+            Debug.WriteLine("BME280Spi::Initialize");
+
+            try
+            {
+                var settings = new SpiConnectionSettings(spi_chip_select_line);
+                settings.ClockFrequency = 4000000; // Max frequency of BME280 is 10000000
+                settings.Mode = SpiMode.Mode0;
+                settings.DataBitLength = 8;
+
+                string spiAqs = SpiDevice.GetDeviceSelector(spi_controller_name);
+                Debug.WriteLine("spiAqs" + spiAqs.ToString());
+
+                var deviceInfo = await DeviceInformation.FindAllAsync(spiAqs);
+                Debug.WriteLine(deviceInfo[0].Id.ToString());
+
+
+                bme280spi = await SpiDevice.FromIdAsync(deviceInfo[0].Id, settings);
+
+                if (bme280spi == null)
+                {
+                    throw new Exception("Unable to initialize SPI device!");
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.WriteLine("Exception: " + e.Message + "\n" + e.StackTrace);
+                throw;
+            }
+
+        }
+
+        protected override async Task Begin()
+        {
+            Debug.WriteLine("BME280Spi::Begin");
+            byte[] WriteBuffer = new byte[] { (byte)eRegisters.BME280_REGISTER_CHIPID };
+            byte[] ReadBuffer = new byte[] { 0x00 };
+
+            //Read the device signature
+            bme280spi.TransferSequential(WriteBuffer, ReadBuffer);
+            Debug.WriteLine("BME280 Signature: " + ReadBuffer[0].ToString());
+
+            //Verify the device signature
+            if (ReadBuffer[0] != BME280_Signature)
+            {
+                Debug.WriteLine("BME280::Begin Signature Mismatch.");
+                bme280spi.Dispose();
+                bme280spi = null;
+                throw new Exception("BMESpi: Signature Mismatch!");
+            }
+
+            //Set the initialize variable to true
+            init = true;
+
+            //Read the coefficients table
+            CalibrationData = await ReadCoefficeints();
+
+            //Write control register
+            await WriteControlRegister();
+
+            //Write humidity control register
+            await WriteControlRegisterHumidity();
+        }
+
+        //Method to write 0x03 to the humidity control register
+        protected override async Task WriteControlRegisterHumidity()
+        {
+            byte[] WriteBuffer = new byte[] { (byte)eRegisters.BME280_REGISTER_CONTROLHUMID, 0x03 };
+            bme280spi.Write(WriteBuffer);
+            await Task.Delay(1);
+            return;
+        }
+
+        //Method to write 0x3F to the control register
+        protected override async Task WriteControlRegister()
+        {
+            byte[] WriteBuffer = new byte[] { (byte)eRegisters.BME280_REGISTER_CONTROL, 0x3F };
+            bme280spi.Write(WriteBuffer);
+            await Task.Delay(1);
+            return;
+        }
+
+        //Method to read a 16-bit value from a register and return it in little endian format
+        protected override UInt16 ReadUInt16_LittleEndian(byte register)
+        {
+            UInt16 value = 0;
+            byte[] writeBuffer = new byte[] { 0x00 };
+            byte[] readBuffer = new byte[] { 0x00, 0x00 };
+
+            writeBuffer[0] = register;
+
+            bme280spi.TransferSequential(writeBuffer, readBuffer);
+            int h = readBuffer[1] << 8;
+            int l = readBuffer[0];
+            value = (UInt16)(h + l);
+            return value;
+        }
+
+        //Method to read an 8-bit value from a register
+        protected override byte ReadByte(byte register)
+        {
+            byte value = 0;
+            byte[] writeBuffer = new byte[] { 0x00 };
+            byte[] readBuffer = new byte[] { 0x00 };
+
+            writeBuffer[0] = register;
+
+            bme280spi.TransferSequential(writeBuffer, readBuffer);
+            value = readBuffer[0];
+            return value;
+        }
+
+    }
+
 }

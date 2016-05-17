@@ -1,10 +1,9 @@
 ﻿using System;
 using System.Diagnostics;
-using System.Collections.Generic;
 using System.Net.Http;
-using Windows.UI.Xaml;
 using Windows.UI.Xaml.Controls;
 using Windows.UI.Xaml.Navigation;
+using System.Threading.Tasks;
 
 // The Blank Page item template is documented at http://go.microsoft.com/fwlink/?LinkId=402352&clcid=0x409
 
@@ -18,6 +17,15 @@ namespace Lesson_203V2
         //A class which wraps the barometric sensor
         BME280Sensor BME280;
 
+        //Create a constant for pressure at sea level. 
+        //This is based on your local sea level pressure (Unit: Hectopascal)
+        const float seaLevelPressure = 1022.00f;
+
+        public float Temperature { get; set; }
+        public float Pressure { get; set; }
+        public float Altitude { get; set; }
+        public float Humidity { get; set; }
+
         public MainPage()
         {
             this.InitializeComponent();
@@ -28,45 +36,51 @@ namespace Lesson_203V2
         {
             Debug.WriteLine("MainPage::OnNavigatedTo");
 
-            MakePinWebAPICall();
+            //MakePinWebAPICall();
+            
+            Temperature = 0;
+            Pressure = 0;
+            Altitude = 0;
+            Humidity = 0;
 
             try
             {
-                // Create a new object for our sensor class
-                BME280 = new BME280Sensor();
-                //Initialize the sensor
+                BME280 = new BME280SpiSensor();
                 await BME280.Initialize();
 
-                //Create variables to store the sensor data: temperature, pressure, humidity and altitude. 
-                //Initialize them to 0.
-                float temp = 0;
-                float pressure = 0;
-                float altitude = 0;
-                float humidity = 0;
-
-                //Create a constant for pressure at sea level. 
-                //This is based on your local sea level pressure (Unit: Hectopascal)
-                const float seaLevelPressure = 1022.00f;
-
-                //Read 10 samples of the data
-                for (int i = 0; i < 10; i++)
+                for (int x=0; x <= 10; x++)
                 {
-                    temp = await BME280.ReadTemperature();
-                    pressure = await BME280.ReadPreasure();
-                    altitude = await BME280.ReadAltitude(seaLevelPressure);
-                    humidity = await BME280.ReadHumidity();
+                    await getTemperature();
 
-                    //Write the values to your debug console
-                    Debug.WriteLine("Temperature: " + temp.ToString() + " deg C");
-                    Debug.WriteLine("Humidity: " + humidity.ToString() + " %");
-                    Debug.WriteLine("Pressure: " + pressure.ToString() + " Pa");
-                    Debug.WriteLine("Altitude: " + altitude.ToString() + " m");
-                    Debug.WriteLine("");
+                    Debug.WriteLine("Temperature: " + Temperature.ToString() + " deg C");
+                    Debug.WriteLine("Humidity: " + Humidity.ToString() + " %");
+                    Debug.WriteLine("Pressure: " + Pressure.ToString() + " Pa");
+                    Debug.WriteLine("Altitude: " + Altitude.ToString() + " m");
+                }
+
+
+            }
+            catch(Exception ex)
+            {
+                Debug.WriteLine("OnNavigateTo: " + ex.Message + " Stack Trace: " + ex.StackTrace);
+            }
+        }
+
+        public async Task getTemperature()
+        {
+            try
+            {
+                if (BME280 != null)
+                {
+                    Temperature = await BME280.ReadTemperature();
+                    Pressure = await BME280.ReadPreasure();
+                    Altitude = await BME280.ReadAltitude(seaLevelPressure);
+                    Humidity = await BME280.ReadHumidity();
                 }
             }
-            catch (Exception ex)
+            catch(Exception ex)
             {
-                Debug.WriteLine(ex.Message);
+                Debug.WriteLine("getTemperature: " + ex.Message + " Stack Trace: " + ex.StackTrace);
             }
         }
 
@@ -93,5 +107,61 @@ namespace Lesson_203V2
                 Debug.WriteLine("Web call failed: " + e.Message);
             }
         }
+
+        //private void ReadMeasurements_Click(object sender, RoutedEventArgs e)
+        //{
+        //    getTemperature();
+        //    this.Readings.Text = "Temperature: " + Temperature.ToString() + " deg C\n" + 
+        //                         "Humidity: " + Humidity.ToString() + " %\n" +
+        //                         "Pressure: " + Pressure.ToString() + " Pa\n" +
+        //                         "Altitude: " + Altitude.ToString() + " m\n";
+        //}
+
+        //private async void rbI2C_Checked(object sender, RoutedEventArgs e)
+        //{
+        //    BME280 = new BME280I2cSensor();
+
+        //    try
+        //    {
+        //        this.Readings.Text = "Initializing BME280 on I2C bus!";
+        //        await BME280.Initialize();
+        //    }
+        //    catch(Exception ex)
+        //    {
+        //        this.Readings.Text = ex.Message;
+        //    }
+
+        //}
+
+        //private async void rbSPI0_Checked(object sender, RoutedEventArgs e)
+        //{
+        //    BME280 = new BME280SpiSensor();
+
+        //    try
+        //    {
+        //        this.Readings.Text = "Initializing BME280 on SPI0 bus!";
+        //        await BME280.Initialize();
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        this.Readings.Text = ex.Message;
+        //    }
+        //}
+
+        //private async void rbSPI1_Checked(object sender, RoutedEventArgs e)
+        //{
+        //    BME280 = new BME280SpiSensor(SPI_Controllers.SPI1);
+
+        //    try
+        //    {
+        //        this.Readings.Text = "Initializing BME280 on SPI1 bus!";
+        //        await BME280.Initialize();
+        //    }
+        //    catch (Exception ex)
+        //    {
+        //        this.Readings.Text = ex.Message;
+        //    }
+        //}
+
     }
 }
